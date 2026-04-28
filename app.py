@@ -6,17 +6,33 @@ import polyline
 
 st.set_page_config(page_title="Route Mapper", layout="centered")
 
-st.title("📍 Route Mapper (UK + Mapbox + Advanced UI)")
+st.title("📍 Route Mapper (Full Analytics + Fuel)")
 
 MAPBOX_TOKEN = st.secrets["MAPBOX_TOKEN"]
 
 uploaded_file = st.file_uploader("Upload Excel file", type=["xlsx"])
 
 # -------------------------
-# SESSION STATE FIX
+# SIDEBAR TOGGLE
 # -------------------------
-if "map_html" not in st.session_state:
-    st.session_state.map_html = None
+if "sidebar" not in st.session_state:
+    st.session_state.sidebar = True
+
+if st.button("🧭 Toggle Sidebar"):
+    st.session_state.sidebar = not st.session_state.sidebar
+
+if st.session_state.sidebar:
+    st.markdown("""
+        <style>
+        [data-testid="stSidebar"] { display: block; }
+        </style>
+    """, unsafe_allow_html=True)
+else:
+    st.markdown("""
+        <style>
+        [data-testid="stSidebar"] { display: none; }
+        </style>
+    """, unsafe_allow_html=True)
 
 # -------------------------
 # MAP SIZE PRESETS
@@ -37,7 +53,34 @@ size_map = {
 map_height = size_map[size_option]
 
 # -------------------------
-# UK COLOURS (distinct palette)
+# FUEL INPUTS (OPTIONAL)
+# -------------------------
+st.subheader("⛽ Fuel Calculator (Optional)")
+
+mpg = st.number_input(
+    "Vehicle MPG (optional)",
+    min_value=0.0,
+    value=0.0,
+    step=1.0
+)
+
+fuel_price = st.number_input(
+    "Fuel price per litre (£) (optional)",
+    min_value=0.0,
+    value=0.0,
+    step=0.01
+)
+
+use_fuel = mpg > 0 and fuel_price > 0
+
+# -------------------------
+# SESSION STATE
+# -------------------------
+if "map_html" not in st.session_state:
+    st.session_state.map_html = None
+
+# -------------------------
+# COLOURS
 # -------------------------
 COLOURS = [
     "#e6194b", "#3cb44b", "#4363d8", "#f58231", "#911eb4",
@@ -45,15 +88,13 @@ COLOURS = [
 ]
 
 # -------------------------
-# SHORTEN FUNCTION
+# SHORTEN
 # -------------------------
 def shorten(text, max_len=35):
-    if len(text) <= max_len:
-        return text
-    return text[:max_len - 3] + "..."
+    return text if len(text) <= max_len else text[:max_len - 3] + "..."
 
 # -------------------------
-# GEOCODING (UK ONLY)
+# GEOCODE (UK ONLY)
 # -------------------------
 @st.cache_data
 def geocode(place):
@@ -80,6 +121,7 @@ def geocode(place):
 @st.cache_data
 def get_route(start_coords, end_coords):
     url = "https://api.mapbox.com/directions/v5/mapbox/driving"
+
     coords = f"{start_coords[1]},{start_coords[0]};{end_coords[1]},{end_coords[0]}"
 
     params = {
@@ -90,22 +132,30 @@ def get_route(start_coords, end_coords):
     res = requests.get(f"{url}/{coords}", params=params).json()
 
     if res.get("routes"):
-        return res["routes"][0]["geometry"]
+        route = res["routes"][0]
+
+        return {
+            "geometry": route["geometry"],
+            "distance_km": route["distance"] / 1000,
+            "duration_min": route["duration"] / 60
+        }
 
     return None
 
 # -------------------------
-# MAIN APP
+# MAIN
 # -------------------------
 if uploaded_file:
 
     df = pd.read_excel(uploaded_file)
 
     if not {"from", "to"}.issubset(df.columns):
-        st.error("Excel must contain 'from' and 'to' columns")
+        st.error("Excel must contain 'from' and 'to'")
     else:
 
         st.success(f"{len(df)} routes loaded")
+
+        route_table = []
 
         if st.button("Generate Map"):
 
@@ -144,38 +194,57 @@ if uploaded_file:
 
                     fg = folium.FeatureGroup(name=short_name)
 
-                    route_poly = get_route(start_coords, end_coords)
+                    route_data = get_route(start_coords, end_coords)
 
-                    if route_poly:
-                        decoded = polyline.decode(route_poly)
+                    if route_data:
+
+                        decoded = polyline.decode(route_data["geometry"])
 
                         folium.PolyLine(
                             decoded,
                             weight=4,
                             color=colour,
-                            tooltip=route_name  # full name on hover
+                            tooltip=route_name
                         ).add_to(fg)
 
-                    folium.Marker(start_coords, popup=start).add_to(fg)
-                    folium.Marker(end_coords, popup=end).add_to(fg)
+                        folium.Marker(start_coords, popup=start).add_to(fg)
+                        folium.Marker(end_coords, popup=end).add_to(fg)
 
-                    fg.add_to(m)
+                        fg.add_to(m)
 
-                    legend_html += f"""
-                    <div>
-                        <span style="
-                            display:inline-block;
-                            width:12px;
-                            height:12px;
-                            background:{colour};
-                            margin-right:8px;">
-                        </span>
-                        {i+1}. {route_name}
-                    </div>
-                    """
+                        # -------------------------
+                        # FUEL CALC (OPTIONAL)
+                        # -------------------------
+                        distance_km = route_data["distance_km"]
+                        duration_min = route_data["duration_min"]
 
-                else:
-                    st.warning(f"Could not find: {start} or {end}")
+                        fuel_cost = None
+
+                        if use_fuel:
+                            litres_per_100km = 282.481 / mpg
+                            fuel_used = (distance_km / 100) * litres_per_100km
+                            fuel_cost = fuel_used * fuel_price
+
+                        route_table.append({
+                            "From": start,
+                            "To": end,
+                            "Distance (km)": round(distance_km, 1),
+                            "Drive Time (min)": round(duration_min, 0),
+                            "Fuel Cost (£)": round(fuel_cost, 2) if fuel_cost else None
+                        })
+
+                        legend_html += f"""
+                        <div>
+                            <span style="
+                                display:inline-block;
+                                width:12px;
+                                height:12px;
+                                background:{colour};
+                                margin-right:8px;">
+                            </span>
+                            {i+1}. {route_name}
+                        </div>
+                        """
 
             legend_html += "</div>"
 
@@ -183,7 +252,6 @@ if uploaded_file:
 
             folium.LayerControl(collapsed=False).add_to(m)
 
-            # IMPORTANT FIX: stable render
             st.session_state.map_html = m.get_root().render()
 
 # -------------------------
@@ -196,12 +264,25 @@ if st.session_state.map_html:
     st.components.v1.html(
         st.session_state.map_html,
         height=map_height,
-        scrolling=True
+        scrolling=True,
+        key=f"map_{map_height}"
     )
 
-    # -------------------------
-    # EXPORT
-    # -------------------------
+# -------------------------
+# TABLE + FUEL SUMMARY
+# -------------------------
+if uploaded_file and st.session_state.map_html:
+
+    st.subheader("📊 Route Summary")
+
+    df_table = pd.DataFrame(route_table)
+
+    st.dataframe(df_table, use_container_width=True, hide_index=True)
+
+    if use_fuel:
+        total_fuel = df_table["Fuel Cost (£)"].sum()
+        st.metric("Total Fuel Cost", f"£{total_fuel:.2f}")
+
     st.download_button(
         "📤 Download Map (HTML)",
         data=st.session_state.map_html,
