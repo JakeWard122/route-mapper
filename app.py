@@ -3,18 +3,26 @@ import pandas as pd
 import folium
 import requests
 import polyline
+from streamlit_folium import st_folium
 
 st.set_page_config(page_title="Route Mapper", layout="centered")
+st.title("📍 Route Mapper (Advanced)")
 
-st.title("📍 Route Mapper (Mapbox)")
-
-# --- Session state (FIX for disappearing map) ---
-if "map_html" not in st.session_state:
-    st.session_state.map_html = None
+# --- Session state ---
+if "map_obj" not in st.session_state:
+    st.session_state.map_obj = None
 
 MAPBOX_TOKEN = st.secrets["MAPBOX_TOKEN"]
 
 uploaded_file = st.file_uploader("Upload Excel file", type=["xlsx"])
+
+# --- Distinct colour palette ---
+COLOURS = [
+    "#e6194b", "#3cb44b", "#4363d8", "#f58231", "#911eb4",
+    "#46f0f0", "#f032e6", "#bcf60c", "#fabebe", "#008080",
+    "#e6beff", "#9a6324", "#fffac8", "#800000", "#aaffc3",
+    "#808000", "#ffd8b1", "#000075", "#808080"
+]
 
 # --- Geocoding ---
 @st.cache_data
@@ -25,7 +33,7 @@ def geocode(place):
 
     if res.get("features"):
         coords = res["features"][0]["center"]
-        return (coords[1], coords[0])  # lat, lon
+        return (coords[1], coords[0])
     return None
 
 # --- Routing ---
@@ -45,7 +53,7 @@ def get_route(start_coords, end_coords):
         return res["routes"][0]["geometry"]
     return None
 
-# --- Main logic ---
+# --- Build map ---
 if uploaded_file:
     df = pd.read_excel(uploaded_file)
 
@@ -55,38 +63,91 @@ if uploaded_file:
         st.success(f"{len(df)} routes loaded")
 
         if st.button("Generate Map"):
-            with st.spinner("Mapping routes..."):
-                m = folium.Map(
-                    location=[54.5, -3],
-                    zoom_start=6,
-                    tiles="OpenStreetMap"
-                )
+            m = folium.Map(location=[54.5, -3], zoom_start=6)
 
-                for _, row in df.iterrows():
-                    start = row["from"]
-                    end = row["to"]
+            legend_html = """
+            <div style="
+                position: fixed;
+                bottom: 20px;
+                left: 20px;
+                width: 250px;
+                max-height: 300px;
+                overflow-y: auto;
+                background: white;
+                padding: 10px;
+                border: 2px solid grey;
+                z-index:9999;
+                font-size:14px;">
+            <b>Route Key</b><br>
+            """
 
-                    start_coords = geocode(start)
-                    end_coords = geocode(end)
+            for i, row in df.iterrows():
+                start = row["from"]
+                end = row["to"]
 
-                    if start_coords and end_coords:
-                        # markers
-                        folium.Marker(start_coords, popup=f"Start: {start}").add_to(m)
-                        folium.Marker(end_coords, popup=f"End: {end}").add_to(m)
+                colour = COLOURS[i % len(COLOURS)]
+                route_name = f"Route {i+1}: {start} → {end}"
 
-                        # route
-                        route_poly = get_route(start_coords, end_coords)
+                start_coords = geocode(start)
+                end_coords = geocode(end)
 
-                        if route_poly:
-                            decoded = polyline.decode(route_poly)
-                            folium.PolyLine(decoded, weight=4).add_to(m)
-                    else:
-                        st.warning(f"Could not find: {start} or {end}")
+                if start_coords and end_coords:
 
-                # ✅ STORE MAP (fix)
-                st.session_state.map_html = m._repr_html_()
+                    # Create layer (for toggling)
+                    fg = folium.FeatureGroup(name=route_name)
 
-# --- DISPLAY MAP (outside button) ---
-if st.session_state.map_html:
+                    # markers with numbers
+                    folium.Marker(
+                        start_coords,
+                        popup=f"{route_name} (Start)",
+                        icon=folium.DivIcon(html=f"""<div style="font-size: 12pt">{i+1}</div>""")
+                    ).add_to(fg)
+
+                    folium.Marker(
+                        end_coords,
+                        popup=f"{route_name} (End)"
+                    ).add_to(fg)
+
+                    route_poly = get_route(start_coords, end_coords)
+
+                    if route_poly:
+                        decoded = polyline.decode(route_poly)
+                        folium.PolyLine(
+                            decoded,
+                            weight=4,
+                            color=colour
+                        ).add_to(fg)
+
+                    fg.add_to(m)
+
+                    # add to legend
+                    legend_html += f"""
+                    <div>
+                        <span style="display:inline-block;width:12px;height:12px;background:{colour};margin-right:8px;"></span>
+                        {i+1}. {start} → {end}
+                    </div>
+                    """
+
+                else:
+                    st.warning(f"Could not find: {start} or {end}")
+
+            legend_html += "</div>"
+            m.get_root().html.add_child(folium.Element(legend_html))
+
+            # layer control (clickable legend)
+            folium.LayerControl(collapsed=False).add_to(m)
+
+            st.session_state.map_obj = m
+
+# --- Display ---
+if st.session_state.map_obj:
     st.subheader("🗺️ Map")
-    st.components.v1.html(st.session_state.map_html, height=500)
+    st_folium(st.session_state.map_obj, height=500, use_container_width=True)
+
+    # --- Export ---
+    st.download_button(
+        "📤 Download Map (HTML)",
+        data=st.session_state.map_obj.get_root().render(),
+        file_name="routes_map.html",
+        mime="text/html"
+    )
