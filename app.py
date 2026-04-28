@@ -6,7 +6,7 @@ import polyline
 
 st.set_page_config(page_title="Route Mapper", layout="centered")
 
-st.title("📍 Route Mapper (Stable Version)")
+st.title("📍 Route Mapper (UK + Mapbox + Advanced UI)")
 
 MAPBOX_TOKEN = st.secrets["MAPBOX_TOKEN"]
 
@@ -19,7 +19,25 @@ if "map_html" not in st.session_state:
     st.session_state.map_html = None
 
 # -------------------------
-# COLOURS
+# MAP SIZE PRESETS
+# -------------------------
+size_option = st.radio(
+    "Map size",
+    ["Small", "Medium", "Large", "Fullscreen"],
+    horizontal=True
+)
+
+size_map = {
+    "Small": 450,
+    "Medium": 600,
+    "Large": 800,
+    "Fullscreen": 1000
+}
+
+map_height = size_map[size_option]
+
+# -------------------------
+# UK COLOURS (distinct palette)
 # -------------------------
 COLOURS = [
     "#e6194b", "#3cb44b", "#4363d8", "#f58231", "#911eb4",
@@ -27,21 +45,37 @@ COLOURS = [
 ]
 
 # -------------------------
-# GEOCODING (Mapbox)
+# SHORTEN FUNCTION
+# -------------------------
+def shorten(text, max_len=35):
+    if len(text) <= max_len:
+        return text
+    return text[:max_len - 3] + "..."
+
+# -------------------------
+# GEOCODING (UK ONLY)
 # -------------------------
 @st.cache_data
 def geocode(place):
     url = f"https://api.mapbox.com/geocoding/v5/mapbox.places/{place}.json"
-    params = {"access_token": MAPBOX_TOKEN, "limit": 1}
+
+    params = {
+        "access_token": MAPBOX_TOKEN,
+        "limit": 1,
+        "country": "gb",
+        "proximity": "-0.1276,51.5072"
+    }
+
     res = requests.get(url, params=params).json()
 
     if res.get("features"):
         coords = res["features"][0]["center"]
-        return (coords[1], coords[0])  # lat, lon
+        return (coords[1], coords[0])
+
     return None
 
 # -------------------------
-# ROUTING (Mapbox)
+# ROUTING
 # -------------------------
 @st.cache_data
 def get_route(start_coords, end_coords):
@@ -57,10 +91,11 @@ def get_route(start_coords, end_coords):
 
     if res.get("routes"):
         return res["routes"][0]["geometry"]
+
     return None
 
 # -------------------------
-# MAIN LOGIC
+# MAIN APP
 # -------------------------
 if uploaded_file:
 
@@ -99,12 +134,15 @@ if uploaded_file:
 
                 colour = COLOURS[i % len(COLOURS)]
 
+                route_name = f"{start} → {end}"
+                short_name = shorten(route_name)
+
                 start_coords = geocode(start)
                 end_coords = geocode(end)
 
                 if start_coords and end_coords:
 
-                    fg = folium.FeatureGroup(name=f"Route {i+1}")
+                    fg = folium.FeatureGroup(name=short_name)
 
                     route_poly = get_route(start_coords, end_coords)
 
@@ -114,7 +152,8 @@ if uploaded_file:
                         folium.PolyLine(
                             decoded,
                             weight=4,
-                            color=colour
+                            color=colour,
+                            tooltip=route_name  # full name on hover
                         ).add_to(fg)
 
                     folium.Marker(start_coords, popup=start).add_to(fg)
@@ -124,22 +163,31 @@ if uploaded_file:
 
                     legend_html += f"""
                     <div>
-                        <span style="display:inline-block;width:12px;height:12px;background:{colour};margin-right:8px;"></span>
-                        {i+1}. {start} → {end}
+                        <span style="
+                            display:inline-block;
+                            width:12px;
+                            height:12px;
+                            background:{colour};
+                            margin-right:8px;">
+                        </span>
+                        {i+1}. {route_name}
                     </div>
                     """
+
+                else:
+                    st.warning(f"Could not find: {start} or {end}")
 
             legend_html += "</div>"
 
             m.get_root().html.add_child(folium.Element(legend_html))
 
-            folium.LayerControl().add_to(m)
+            folium.LayerControl(collapsed=False).add_to(m)
 
-            # 🔥 CRITICAL FIX
+            # IMPORTANT FIX: stable render
             st.session_state.map_html = m.get_root().render()
 
 # -------------------------
-# STABLE RENDER (IMPORTANT)
+# MAP DISPLAY
 # -------------------------
 if st.session_state.map_html:
 
@@ -147,6 +195,16 @@ if st.session_state.map_html:
 
     st.components.v1.html(
         st.session_state.map_html,
-        height=550,
+        height=map_height,
         scrolling=True
+    )
+
+    # -------------------------
+    # EXPORT
+    # -------------------------
+    st.download_button(
+        "📤 Download Map (HTML)",
+        data=st.session_state.map_html,
+        file_name="routes_map.html",
+        mime="text/html"
     )
