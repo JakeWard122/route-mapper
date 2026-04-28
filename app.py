@@ -23,13 +23,7 @@ MAPBOX_TOKEN = st.secrets["MAPBOX_TOKEN"]
 uploaded_file = st.file_uploader("Upload Excel file", type=["xlsx"])
 
 # -------------------------
-# STATE
-# -------------------------
-if "selected_route" not in st.session_state:
-    st.session_state.selected_route = None
-
-# -------------------------
-# COLOUR SYSTEM (STABLE)
+# COLOUR SYSTEM (STABLE PER ROUTE)
 # -------------------------
 def route_colour(route_id: str):
     h = hashlib.md5(route_id.encode()).hexdigest()
@@ -90,7 +84,7 @@ def get_route(start_coords, end_coords):
     return None
 
 # -------------------------
-# MAIN INPUT
+# INPUTS
 # -------------------------
 if uploaded_file:
 
@@ -138,6 +132,7 @@ if uploaded_file:
 
                     decoded = polyline.decode(route_data["geometry"])
 
+                    # ROUTE LINE
                     folium.PolyLine(
                         decoded,
                         weight=4,
@@ -145,7 +140,7 @@ if uploaded_file:
                         tooltip=f"{start} → {end}"
                     ).add_to(m)
 
-                    # 📍 START PIN
+                    # START PIN
                     folium.CircleMarker(
                         location=start_coords,
                         radius=3,
@@ -156,7 +151,7 @@ if uploaded_file:
                         tooltip=f"Start: {start}"
                     ).add_to(m)
 
-                    # 📍 END PIN
+                    # END PIN
                     folium.CircleMarker(
                         location=end_coords,
                         radius=4,
@@ -182,102 +177,31 @@ if uploaded_file:
         st.session_state.map_html = m.get_root().render()
 
 # -------------------------
-# OUTPUT
+# OUTPUT (STABLE - NO CLICK LOGIC)
 # -------------------------
 if "map_html" in st.session_state:
 
     st.subheader("🗺️ Map")
 
-    df_table = pd.DataFrame(route_table)
-
-    # -------------------------
-    # RESET VIEW
-    # -------------------------
-    if st.button("🌍 Show All Routes"):
-        st.session_state.selected_route = None
-
-    # -------------------------
-    # SINGLE CLEAN TABLE (NO DUPLICATES)
-    # -------------------------
-    st.subheader("📊 Route List")
-
-    for i, row in df_table.iterrows():
-
-        col1, col2, col3, col4 = st.columns([4, 2, 2, 1])
-
-        with col1:
-            st.write(f"**{row['From']} → {row['To']}**")
-
-        with col2:
-            st.write(f"{row['Distance (km)']} km")
-
-        with col3:
-            st.write(f"{row['Drive Time (min)']} min")
-
-        with col4:
-            if st.button("View", key=f"view_{i}"):
-                st.session_state.selected_route = i
-
-    # -------------------------
-    # FILTER MAP (STABLE)
-    # -------------------------
-    selected = st.session_state.selected_route
-
-    m = folium.Map(location=[54.5, -3], zoom_start=6)
-
-    for i, row in df_table.iterrows():
-
-        if selected is not None and i != selected:
-            continue
-
-        route_id = f"{row['From']}->{row['To']}"
-        colour = route_colour(route_id)
-
-        start_coords = geocode(row["From"])
-        end_coords = geocode(row["To"])
-
-        if start_coords and end_coords:
-
-            route_data = get_route(start_coords, end_coords)
-
-            if route_data:
-
-                decoded = polyline.decode(route_data["geometry"])
-
-                folium.PolyLine(
-                    decoded,
-                    weight=4,
-                    color=colour,
-                    tooltip=f"{row['From']} → {row['To']}"
-                ).add_to(m)
-
-                folium.CircleMarker(
-                    location=start_coords,
-                    radius=3,
-                    color=colour,
-                    fill=True,
-                    fill_color=colour,
-                    fill_opacity=0.9
-                ).add_to(m)
-
-                folium.CircleMarker(
-                    location=end_coords,
-                    radius=4,
-                    color=colour,
-                    fill=True,
-                    fill_color=colour,
-                    fill_opacity=1
-                ).add_to(m)
-
     st.components.v1.html(
-        m.get_root().render(),
+        st.session_state.map_html,
         height=800,
         scrolling=True
     )
 
+    st.subheader("📊 Route Table")
+
+    df_table = pd.DataFrame(route_table)
+
+    st.dataframe(
+        df_table,
+        use_container_width=True,
+        hide_index=True
+    )
+
     st.download_button(
         "📤 Download Map (HTML)",
-        data=m.get_root().render(),
+        data=st.session_state.map_html,
         file_name="routes_map.html",
         mime="text/html"
     )
