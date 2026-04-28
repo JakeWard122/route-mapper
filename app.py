@@ -2,12 +2,15 @@ import streamlit as st
 import pandas as pd
 import folium
 import requests
-from streamlit_folium import st_folium
 import polyline
 
 st.set_page_config(page_title="Route Mapper", layout="centered")
 
 st.title("📍 Route Mapper (Mapbox)")
+
+# --- Session state (FIX for disappearing map) ---
+if "map_html" not in st.session_state:
+    st.session_state.map_html = None
 
 MAPBOX_TOKEN = st.secrets["MAPBOX_TOKEN"]
 
@@ -20,7 +23,7 @@ def geocode(place):
     params = {"access_token": MAPBOX_TOKEN, "limit": 1}
     res = requests.get(url, params=params).json()
 
-    if res["features"]:
+    if res.get("features"):
         coords = res["features"][0]["center"]
         return (coords[1], coords[0])  # lat, lon
     return None
@@ -29,9 +32,8 @@ def geocode(place):
 @st.cache_data
 def get_route(start_coords, end_coords):
     url = "https://api.mapbox.com/directions/v5/mapbox/driving"
-    
     coords = f"{start_coords[1]},{start_coords[0]};{end_coords[1]},{end_coords[0]}"
-    
+
     params = {
         "access_token": MAPBOX_TOKEN,
         "geometries": "polyline"
@@ -43,6 +45,7 @@ def get_route(start_coords, end_coords):
         return res["routes"][0]["geometry"]
     return None
 
+# --- Main logic ---
 if uploaded_file:
     df = pd.read_excel(uploaded_file)
 
@@ -80,10 +83,10 @@ if uploaded_file:
                     else:
                         st.warning(f"Could not find: {start} or {end}")
 
-                st.subheader("🗺️ Map")
-                st_folium(m, height=500, use_container_width=True)
+                # ✅ STORE MAP (fix)
+                st.session_state.map_html = m._repr_html_()
 
-                # download
-                m.save("routes_map.html")
-                with open("routes_map.html", "rb") as f:
-                    st.download_button("Download Map", f, "routes_map.html")
+# --- DISPLAY MAP (outside button) ---
+if st.session_state.map_html:
+    st.subheader("🗺️ Map")
+    st.components.v1.html(st.session_state.map_html, height=500)
