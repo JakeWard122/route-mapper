@@ -23,6 +23,15 @@ MAPBOX_TOKEN = st.secrets["MAPBOX_TOKEN"]
 uploaded_file = st.file_uploader("Upload Excel file", type=["xlsx"])
 
 # -------------------------
+# SESSION STATE (FIXED)
+# -------------------------
+if "map_html" not in st.session_state:
+    st.session_state.map_html = None
+
+if "route_table" not in st.session_state:
+    st.session_state.route_table = []
+
+# -------------------------
 # COLOUR SYSTEM (STABLE)
 # -------------------------
 def route_colour(route_id: str):
@@ -84,12 +93,6 @@ def get_route(start_coords, end_coords):
     return None
 
 # -------------------------
-# SESSION STATE
-# -------------------------
-if "map_html" not in st.session_state:
-    st.session_state.map_html = None
-
-# -------------------------
 # INPUT
 # -------------------------
 if uploaded_file:
@@ -102,12 +105,12 @@ if uploaded_file:
 
     st.success(f"{len(df)} routes loaded")
 
-    route_table = []
-
     # -------------------------
     # GENERATE MAP
     # -------------------------
     if st.button("Generate Map"):
+
+        st.session_state.route_table = []   # 🔴 FIX: reset safely
 
         progress = st.progress(0)
         status = st.empty()
@@ -157,7 +160,6 @@ if uploaded_file:
 
                     decoded = polyline.decode(route_data["geometry"])
 
-                    # ROUTE LINE
                     folium.PolyLine(
                         decoded,
                         weight=4,
@@ -187,7 +189,8 @@ if uploaded_file:
                         tooltip=f"End: {end}"
                     ).add_to(m)
 
-                    route_table.append({
+                    # 🔴 FIX: session state storage
+                    st.session_state.route_table.append({
                         "From": start,
                         "To": end,
                         "Distance (km)": round(route_data["distance_km"], 1),
@@ -218,11 +221,11 @@ if uploaded_file:
         st.session_state.map_html = m.get_root().render()
 
 # -------------------------
-# OUTPUT (70/30 LAYOUT)
+# OUTPUT (STABLE 70/30)
 # -------------------------
-if "map_html" in st.session_state:
+if st.session_state.map_html:
 
-    df_table = pd.DataFrame(route_table)
+    df_table = pd.DataFrame(st.session_state.route_table)
 
     st.subheader("🗺️ Route Dashboard")
 
