@@ -3,14 +3,86 @@ import pandas as pd
 import folium
 import requests
 import polyline
+import time
 
-st.set_page_config(page_title="Route Mapper", layout="centered")
+st.set_page_config(
+    page_title="NWT Backload Planning Tool",
+    layout="centered"
+)
 
-st.title("📍 Route Mapper (Full Analytics + Fuel)")
+st.markdown("# 🚛 NWT Backload Planning Tool")
+st.markdown("### Logistics Dashboard")
 
 MAPBOX_TOKEN = st.secrets["MAPBOX_TOKEN"]
 
 uploaded_file = st.file_uploader("Upload Excel file", type=["xlsx"])
+
+# -------------------------
+# BLUE / WHITE THEME
+# -------------------------
+st.markdown("""
+<style>
+
+/* App background */
+[data-testid="stAppViewContainer"] {
+    background-color: #f4f8ff;
+}
+
+/* Header */
+h1 {
+    color: #0b3d91;
+    font-weight: 800;
+    border-left: 8px solid #1f6feb;
+    padding-left: 12px;
+}
+
+/* Sidebar */
+[data-testid="stSidebar"] {
+    background-color: #0b3d91;
+    color: white;
+}
+
+[data-testid="stSidebar"] * {
+    color: white;
+}
+
+/* Buttons */
+.stButton>button {
+    background-color: #1f6feb;
+    color: white;
+    font-weight: 600;
+    border-radius: 6px;
+    border: none;
+}
+
+.stButton>button:hover {
+    background-color: #174ea6;
+}
+
+/* Metrics */
+[data-testid="stMetric"] {
+    background-color: white;
+    padding: 12px;
+    border-radius: 10px;
+    border-left: 6px solid #1f6feb;
+    box-shadow: 0px 2px 6px rgba(0,0,0,0.08);
+}
+
+/* Table */
+[data-testid="stDataFrame"] {
+    border: 2px solid #1f6feb;
+    border-radius: 10px;
+    overflow: hidden;
+}
+
+/* Map frame */
+iframe {
+    border: 3px solid #1f6feb !important;
+    border-radius: 10px;
+}
+
+</style>
+""", unsafe_allow_html=True)
 
 # -------------------------
 # SIDEBAR TOGGLE
@@ -35,7 +107,7 @@ else:
     """, unsafe_allow_html=True)
 
 # -------------------------
-# MAP SIZE PRESETS
+# MAP SIZE
 # -------------------------
 size_option = st.radio(
     "Map size",
@@ -53,23 +125,12 @@ size_map = {
 map_height = size_map[size_option]
 
 # -------------------------
-# FUEL INPUTS (OPTIONAL)
+# FUEL INPUTS
 # -------------------------
 st.subheader("⛽ Fuel Calculator (Optional)")
 
-mpg = st.number_input(
-    "Vehicle MPG (optional)",
-    min_value=0.0,
-    value=0.0,
-    step=1.0
-)
-
-fuel_price = st.number_input(
-    "Fuel price per litre (£) (optional)",
-    min_value=0.0,
-    value=0.0,
-    step=0.01
-)
+mpg = st.number_input("Vehicle MPG", min_value=0.0, value=0.0)
+fuel_price = st.number_input("Fuel price (£/litre)", min_value=0.0, value=0.0)
 
 use_fuel = mpg > 0 and fuel_price > 0
 
@@ -83,19 +144,16 @@ if "map_html" not in st.session_state:
 # COLOURS
 # -------------------------
 COLOURS = [
-    "#e6194b", "#3cb44b", "#4363d8", "#f58231", "#911eb4",
-    "#46f0f0", "#f032e6", "#bcf60c", "#fabebe", "#008080",
+    "#1f6feb", "#0b3d91", "#2f81f7", "#58a6ff", "#79c0ff",
+    "#3b82f6", "#2563eb", "#1d4ed8", "#60a5fa", "#93c5fd",
 ]
 
 # -------------------------
-# SHORTEN
+# HELPERS
 # -------------------------
 def shorten(text, max_len=35):
     return text if len(text) <= max_len else text[:max_len - 3] + "..."
 
-# -------------------------
-# GEOCODE (UK ONLY)
-# -------------------------
 @st.cache_data
 def geocode(place):
     url = f"https://api.mapbox.com/geocoding/v5/mapbox.places/{place}.json"
@@ -115,9 +173,6 @@ def geocode(place):
 
     return None
 
-# -------------------------
-# ROUTING
-# -------------------------
 @st.cache_data
 def get_route(start_coords, end_coords):
     url = "https://api.mapbox.com/directions/v5/mapbox/driving"
@@ -133,7 +188,6 @@ def get_route(start_coords, end_coords):
 
     if res.get("routes"):
         route = res["routes"][0]
-
         return {
             "geometry": route["geometry"],
             "distance_km": route["distance"] / 1000,
@@ -159,6 +213,9 @@ if uploaded_file:
 
         if st.button("Generate Map"):
 
+            progress = st.progress(0)
+            status = st.empty()
+
             m = folium.Map(location=[54.5, -3], zoom_start=6)
 
             legend_html = """
@@ -171,13 +228,18 @@ if uploaded_file:
                 overflow-y: auto;
                 background: white;
                 padding: 10px;
-                border: 2px solid grey;
+                border: 2px solid #1f6feb;
                 z-index:9999;
                 font-size:14px;">
             <b>Route Key</b><br>
             """
 
+            total = len(df)
+
             for i, row in df.iterrows():
+
+                status.text(f"Processing route {i+1} of {total}")
+                progress.progress((i + 1) / total)
 
                 start = row["from"]
                 end = row["to"]
@@ -207,14 +269,8 @@ if uploaded_file:
                             tooltip=route_name
                         ).add_to(fg)
 
-                        folium.Marker(start_coords, popup=start).add_to(fg)
-                        folium.Marker(end_coords, popup=end).add_to(fg)
-
                         fg.add_to(m)
 
-                        # -------------------------
-                        # FUEL CALC (OPTIONAL)
-                        # -------------------------
                         distance_km = route_data["distance_km"]
                         duration_min = route_data["duration_min"]
 
@@ -235,16 +291,15 @@ if uploaded_file:
 
                         legend_html += f"""
                         <div>
-                            <span style="
-                                display:inline-block;
-                                width:12px;
-                                height:12px;
-                                background:{colour};
-                                margin-right:8px;">
-                            </span>
+                            <span style="display:inline-block;width:12px;height:12px;background:{colour};margin-right:8px;"></span>
                             {i+1}. {route_name}
                         </div>
                         """
+
+                time.sleep(0.05)
+
+            progress.empty()
+            status.empty()
 
             legend_html += "</div>"
 
@@ -255,7 +310,7 @@ if uploaded_file:
             st.session_state.map_html = m.get_root().render()
 
 # -------------------------
-# MAP DISPLAY
+# OUTPUT
 # -------------------------
 if st.session_state.map_html:
 
@@ -264,14 +319,8 @@ if st.session_state.map_html:
     st.components.v1.html(
         st.session_state.map_html,
         height=map_height,
-        scrolling=True,
-        key=f"map_{map_height}"
+        scrolling=True
     )
-
-# -------------------------
-# TABLE + FUEL SUMMARY
-# -------------------------
-if uploaded_file and st.session_state.map_html:
 
     st.subheader("📊 Route Summary")
 
@@ -279,9 +328,19 @@ if uploaded_file and st.session_state.map_html:
 
     st.dataframe(df_table, use_container_width=True, hide_index=True)
 
-    if use_fuel:
-        total_fuel = df_table["Fuel Cost (£)"].sum()
-        st.metric("Total Fuel Cost", f"£{total_fuel:.2f}")
+    col1, col2, col3 = st.columns(3)
+
+    with col1:
+        st.metric("Routes", len(df_table))
+
+    with col2:
+        st.metric("Total Distance", f"{df_table['Distance (km)'].sum():.1f} km")
+
+    with col3:
+        if use_fuel:
+            st.metric("Fuel Cost", f"£{df_table['Fuel Cost (£)'].sum():.2f}")
+        else:
+            st.metric("Fuel Cost", "N/A")
 
     st.download_button(
         "📤 Download Map (HTML)",
