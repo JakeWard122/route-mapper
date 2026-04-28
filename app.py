@@ -5,6 +5,7 @@ import requests
 import polyline
 import time
 import colorsys
+import hashlib
 
 # -------------------------
 # PAGE CONFIG
@@ -24,9 +25,6 @@ uploaded_file = st.file_uploader("Upload Excel file", type=["xlsx"])
 # -------------------------
 # STATE
 # -------------------------
-if "map_html" not in st.session_state:
-    st.session_state.map_html = None
-
 if "selected_route" not in st.session_state:
     st.session_state.selected_route = None
 
@@ -67,17 +65,24 @@ iframe {
 """, unsafe_allow_html=True)
 
 # -------------------------
-# HELPERS
+# STABLE COLOUR (NO REPETITION)
 # -------------------------
-def generate_colour(i, total):
-    hue = i / max(total, 1)
+def route_colour(route_id: str):
+    h = hashlib.md5(route_id.encode()).hexdigest()
+    num = int(h[:8], 16)
+    hue = (num % 360) / 360
+
     rgb = colorsys.hls_to_rgb(hue, 0.5, 0.85)
+
     return "#{:02x}{:02x}{:02x}".format(
         int(rgb[0]*255),
         int(rgb[1]*255),
         int(rgb[2]*255)
     )
 
+# -------------------------
+# HELPERS
+# -------------------------
 @st.cache_data
 def geocode(place):
     url = f"https://api.mapbox.com/geocoding/v5/mapbox.places/{place}.json"
@@ -124,7 +129,7 @@ def shorten(text, max_len=35):
     return text if len(text) <= max_len else text[:max_len - 3] + "..."
 
 # -------------------------
-# INPUTS
+# FUEL
 # -------------------------
 st.subheader("⛽ Fuel Calculator (Optional)")
 
@@ -149,6 +154,7 @@ if uploaded_file:
         route_table = []
 
         if st.button("Generate Map"):
+
             progress = st.progress(0)
             status = st.empty()
 
@@ -164,8 +170,13 @@ if uploaded_file:
                 start = row["from"]
                 end = row["to"]
 
-                route_name = f"{start} → {end}"
-                colour = generate_colour(i, total)
+                route_id = f"{start}->{end}"
+                colour = route_colour(route_id)
+
+                # FILTER LOGIC
+                selected = st.session_state.selected_route
+                if selected is not None and i != selected:
+                    continue
 
                 start_coords = geocode(start)
                 end_coords = geocode(end)
@@ -178,33 +189,34 @@ if uploaded_file:
 
                         decoded = polyline.decode(route_data["geometry"])
 
-                        fg = folium.FeatureGroup(name=shorten(route_name))
+                        fg = folium.FeatureGroup(name=shorten(route_id))
 
+                        # ROUTE LINE
                         folium.PolyLine(
                             decoded,
                             weight=4,
                             color=colour,
-                            tooltip=route_name
+                            tooltip=f"{start} → {end}"
                         ).add_to(fg)
 
-                        # START PIN
+                        # 📍 START PIN (small + coloured)
                         folium.CircleMarker(
                             location=start_coords,
-                            radius=5,
-                            color="#0b3d91",
+                            radius=3,
+                            color=colour,
                             fill=True,
-                            fill_color="#ffffff",
-                            fill_opacity=1,
+                            fill_color=colour,
+                            fill_opacity=0.9,
                             tooltip=f"Start: {start}"
                         ).add_to(fg)
 
-                        # END PIN
+                        # 📍 END PIN (slightly larger)
                         folium.CircleMarker(
                             location=end_coords,
-                            radius=6,
-                            color="#0b3d91",
+                            radius=4,
+                            color=colour,
                             fill=True,
-                            fill_color="#1f6feb",
+                            fill_color=colour,
                             fill_opacity=1,
                             tooltip=f"End: {end}"
                         ).add_to(fg)
@@ -218,7 +230,7 @@ if uploaded_file:
                             "Drive Time (min)": round(route_data["duration_min"], 0),
                         })
 
-                time.sleep(0.05)
+                time.sleep(0.03)
 
             progress.empty()
             status.empty()
@@ -228,22 +240,14 @@ if uploaded_file:
             st.session_state.map_html = m.get_root().render()
 
 # -------------------------
-# SHOW / FILTER MAP
+# OUTPUT
 # -------------------------
-if st.session_state.map_html:
+if "map_html" in st.session_state and st.session_state.map_html:
 
     st.subheader("🗺️ Map")
 
     if st.button("🌍 Show All Routes"):
         st.session_state.selected_route = None
-
-    st.components.v1.html(
-        st.session_state.map_html,
-        height=800,
-        scrolling=True
-    )
-
-    st.subheader("📊 Route Summary")
 
     df_table = pd.DataFrame(route_table)
 
@@ -257,6 +261,16 @@ if st.session_state.map_html:
 
     if selection and selection.selection.rows:
         st.session_state.selected_route = selection.selection.rows[0]
+
+    st.components.v1.html(
+        st.session_state.map_html,
+        height=800,
+        scrolling=True
+    )
+
+    st.subheader("📊 Route Summary")
+
+    st.dataframe(df_table, use_container_width=True, hide_index=True)
 
     st.download_button(
         "📤 Download Map (HTML)",
