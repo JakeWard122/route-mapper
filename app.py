@@ -4,10 +4,14 @@ import folium
 import requests
 import polyline
 import time
+import colorsys
 
+# -------------------------
+# PAGE CONFIG
+# -------------------------
 st.set_page_config(
     page_title="NWT Backload Planning Tool",
-    layout="centered"
+    layout="wide"
 )
 
 st.markdown("# 🚛 NWT Backload Planning Tool")
@@ -18,25 +22,21 @@ MAPBOX_TOKEN = st.secrets["MAPBOX_TOKEN"]
 uploaded_file = st.file_uploader("Upload Excel file", type=["xlsx"])
 
 # -------------------------
-# BLUE / WHITE THEME
+# CSS (BLUE DASHBOARD)
 # -------------------------
 st.markdown("""
 <style>
 
-/* App background */
+.block-container {
+    max-width: 100% !important;
+    padding-left: 2rem;
+    padding-right: 2rem;
+}
+
 [data-testid="stAppViewContainer"] {
     background-color: #f4f8ff;
 }
 
-/* Header */
-h1 {
-    color: #0b3d91;
-    font-weight: 800;
-    border-left: 8px solid #1f6feb;
-    padding-left: 12px;
-}
-
-/* Sidebar */
 [data-testid="stSidebar"] {
     background-color: #0b3d91;
     color: white;
@@ -46,20 +46,17 @@ h1 {
     color: white;
 }
 
-/* Buttons */
 .stButton>button {
     background-color: #1f6feb;
     color: white;
     font-weight: 600;
     border-radius: 6px;
-    border: none;
 }
 
 .stButton>button:hover {
     background-color: #174ea6;
 }
 
-/* Metrics */
 [data-testid="stMetric"] {
     background-color: white;
     padding: 12px;
@@ -68,15 +65,14 @@ h1 {
     box-shadow: 0px 2px 6px rgba(0,0,0,0.08);
 }
 
-/* Table */
 [data-testid="stDataFrame"] {
     border: 2px solid #1f6feb;
     border-radius: 10px;
-    overflow: hidden;
 }
 
-/* Map frame */
 iframe {
+    width: 100% !important;
+    max-width: 100% !important;
     border: 3px solid #1f6feb !important;
     border-radius: 10px;
 }
@@ -107,24 +103,6 @@ else:
     """, unsafe_allow_html=True)
 
 # -------------------------
-# MAP SIZE
-# -------------------------
-size_option = st.radio(
-    "Map size",
-    ["Small", "Medium", "Large", "Fullscreen"],
-    horizontal=True
-)
-
-size_map = {
-    "Small": 450,
-    "Medium": 600,
-    "Large": 800,
-    "Fullscreen": 1000
-}
-
-map_height = size_map[size_option]
-
-# -------------------------
 # FUEL INPUTS
 # -------------------------
 st.subheader("⛽ Fuel Calculator (Optional)")
@@ -135,18 +113,22 @@ fuel_price = st.number_input("Fuel price (£/litre)", min_value=0.0, value=0.0)
 use_fuel = mpg > 0 and fuel_price > 0
 
 # -------------------------
+# UNIQUE COLOUR GENERATOR
+# -------------------------
+def generate_colour(i, total):
+    hue = i / max(total, 1)
+    rgb = colorsys.hls_to_rgb(hue, 0.5, 0.85)
+    return "#{:02x}{:02x}{:02x}".format(
+        int(rgb[0] * 255),
+        int(rgb[1] * 255),
+        int(rgb[2] * 255)
+    )
+
+# -------------------------
 # SESSION STATE
 # -------------------------
 if "map_html" not in st.session_state:
     st.session_state.map_html = None
-
-# -------------------------
-# COLOURS
-# -------------------------
-COLOURS = [
-    "#1f6feb", "#0b3d91", "#2f81f7", "#58a6ff", "#79c0ff",
-    "#3b82f6", "#2563eb", "#1d4ed8", "#60a5fa", "#93c5fd",
-]
 
 # -------------------------
 # HELPERS
@@ -244,7 +226,7 @@ if uploaded_file:
                 start = row["from"]
                 end = row["to"]
 
-                colour = COLOURS[i % len(COLOURS)]
+                colour = generate_colour(i, total)
 
                 route_name = f"{start} → {end}"
                 short_name = shorten(route_name)
@@ -310,7 +292,7 @@ if uploaded_file:
             st.session_state.map_html = m.get_root().render()
 
 # -------------------------
-# OUTPUT
+# OUTPUT (CLEAN TABLE ONLY)
 # -------------------------
 if st.session_state.map_html:
 
@@ -318,7 +300,7 @@ if st.session_state.map_html:
 
     st.components.v1.html(
         st.session_state.map_html,
-        height=map_height,
+        height=800,
         scrolling=True
     )
 
@@ -326,21 +308,11 @@ if st.session_state.map_html:
 
     df_table = pd.DataFrame(route_table)
 
-    st.dataframe(df_table, use_container_width=True, hide_index=True)
-
-    col1, col2, col3 = st.columns(3)
-
-    with col1:
-        st.metric("Routes", len(df_table))
-
-    with col2:
-        st.metric("Total Distance", f"{df_table['Distance (km)'].sum():.1f} km")
-
-    with col3:
-        if use_fuel:
-            st.metric("Fuel Cost", f"£{df_table['Fuel Cost (£)'].sum():.2f}")
-        else:
-            st.metric("Fuel Cost", "N/A")
+    st.dataframe(
+        df_table,
+        use_container_width=True,
+        hide_index=True
+    )
 
     st.download_button(
         "📤 Download Map (HTML)",
