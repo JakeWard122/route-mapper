@@ -1,72 +1,89 @@
 import streamlit as st
 import pandas as pd
 import folium
-from geopy.geocoders import Nominatim
+import requests
 from streamlit_folium import st_folium
-import time
+import polyline
 
 st.set_page_config(page_title="Route Mapper", layout="centered")
 
-st.title("📍 Route Mapper")
-st.markdown("Upload an Excel file with **from** and **to** columns")
+st.title("📍 Route Mapper (Mapbox)")
+
+MAPBOX_TOKEN = st.secrets["MAPBOX_TOKEN"]
 
 uploaded_file = st.file_uploader("Upload Excel file", type=["xlsx"])
 
-geolocator = Nominatim(user_agent="route_mapper_app")
-
+# --- Geocoding ---
 @st.cache_data
-def get_coords(place):
-    try:
-        location = geolocator.geocode(place)
-        time.sleep(1)
-        if location:
-            return (location.latitude, location.longitude)
-    except:
-        return None
+def geocode(place):
+    url = f"https://api.mapbox.com/geocoding/v5/mapbox.places/{place}.json"
+    params = {"access_token": MAPBOX_TOKEN, "limit": 1}
+    res = requests.get(url, params=params).json()
+
+    if res["features"]:
+        coords = res["features"][0]["center"]
+        return (coords[1], coords[0])  # lat, lon
+    return None
+
+# --- Routing ---
+@st.cache_data
+def get_route(start_coords, end_coords):
+    url = "https://api.mapbox.com/directions/v5/mapbox/driving"
+    
+    coords = f"{start_coords[1]},{start_coords[0]};{end_coords[1]},{end_coords[0]}"
+    
+    params = {
+        "access_token": MAPBOX_TOKEN,
+        "geometries": "polyline"
+    }
+
+    res = requests.get(f"{url}/{coords}", params=params).json()
+
+    if res.get("routes"):
+        return res["routes"][0]["geometry"]
     return None
 
 if uploaded_file:
     df = pd.read_excel(uploaded_file)
 
     if not {"from", "to"}.issubset(df.columns):
-        st.error("Your file must contain 'from' and 'to' columns")
+        st.error("Excel must contain 'from' and 'to'")
     else:
         st.success(f"{len(df)} routes loaded")
 
         if st.button("Generate Map"):
             with st.spinner("Mapping routes..."):
-                m = folium.Map(location=[54.5, -3], zoom_start=6)
+                m = folium.Map(
+                    location=[54.5, -3],
+                    zoom_start=6,
+                    tiles="OpenStreetMap"
+                )
 
-                progress = st.progress(0)
-
-                for i, row in df.iterrows():
+                for _, row in df.iterrows():
                     start = row["from"]
                     end = row["to"]
 
-                    start_coords = get_coords(start)
-                    end_coords = get_coords(end)
+                    start_coords = geocode(start)
+                    end_coords = geocode(end)
 
                     if start_coords and end_coords:
+                        # markers
                         folium.Marker(start_coords, popup=f"Start: {start}").add_to(m)
                         folium.Marker(end_coords, popup=f"End: {end}").add_to(m)
 
-                        folium.PolyLine(
-                            [start_coords, end_coords],
-                            weight=3
-                        ).add_to(m)
+                        # route
+                        route_poly = get_route(start_coords, end_coords)
+
+                        if route_poly:
+                            decoded = polyline.decode(route_poly)
+                            folium.PolyLine(decoded, weight=4).add_to(m)
                     else:
                         st.warning(f"Could not find: {start} or {end}")
 
-                    progress.progress((i + 1) / len(df))
+                st.subheader("🗺️ Map")
+                st_folium(m, height=500, use_container_width=True)
 
-                st.subheader("🗺️ Your Map")
-                st_folium(m, height=500)
-
-                # Download option
+                # download
                 m.save("routes_map.html")
                 with open("routes_map.html", "rb") as f:
-                    st.download_button(
-                        "Download Map",
-                        f,
-                        file_name="routes_map.html"
-                    )
+                    st.download_button("Download Map", f, "routes_map.html")
