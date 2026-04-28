@@ -23,7 +23,7 @@ MAPBOX_TOKEN = st.secrets["MAPBOX_TOKEN"]
 uploaded_file = st.file_uploader("Upload Excel file", type=["xlsx"])
 
 # -------------------------
-# COLOUR SYSTEM (STABLE PER ROUTE)
+# COLOUR SYSTEM (STABLE)
 # -------------------------
 def route_colour(route_id: str):
     h = hashlib.md5(route_id.encode()).hexdigest()
@@ -84,7 +84,13 @@ def get_route(start_coords, end_coords):
     return None
 
 # -------------------------
-# INPUTS
+# SESSION STATE
+# -------------------------
+if "map_html" not in st.session_state:
+    st.session_state.map_html = None
+
+# -------------------------
+# INPUT
 # -------------------------
 if uploaded_file:
 
@@ -107,6 +113,25 @@ if uploaded_file:
         status = st.empty()
 
         m = folium.Map(location=[54.5, -3], zoom_start=6)
+
+        legend_html = """
+        <div style="
+            position: fixed;
+            bottom: 20px;
+            left: 20px;
+            width: 260px;
+            max-height: 320px;
+            overflow-y: auto;
+            background: white;
+            border: 2px solid #1f6feb;
+            z-index: 9999;
+            padding: 10px;
+            font-size: 13px;
+            border-radius: 8px;
+            box-shadow: 0px 2px 10px rgba(0,0,0,0.15);
+        ">
+        <b>🚛 Route Key</b><br><br>
+        """
 
         total = len(df)
 
@@ -169,35 +194,68 @@ if uploaded_file:
                         "Drive Time (min)": round(route_data["duration_min"], 0)
                     })
 
+                    legend_html += f"""
+                    <div>
+                        <span style="
+                            display:inline-block;
+                            width:10px;
+                            height:10px;
+                            background:{colour};
+                            margin-right:6px;
+                            border-radius:2px;"></span>
+                        {start} → {end}
+                    </div>
+                    """
+
             time.sleep(0.03)
 
         progress.empty()
         status.empty()
 
+        legend_html += "</div>"
+        m.get_root().html.add_child(folium.Element(legend_html))
+
         st.session_state.map_html = m.get_root().render()
 
 # -------------------------
-# OUTPUT (STABLE - NO CLICK LOGIC)
+# OUTPUT (70/30 LAYOUT)
 # -------------------------
 if "map_html" in st.session_state:
 
-    st.subheader("🗺️ Map")
-
-    st.components.v1.html(
-        st.session_state.map_html,
-        height=800,
-        scrolling=True
-    )
-
-    st.subheader("📊 Route Table")
-
     df_table = pd.DataFrame(route_table)
 
-    st.dataframe(
-        df_table,
-        use_container_width=True,
-        hide_index=True
-    )
+    st.subheader("🗺️ Route Dashboard")
+
+    map_col, table_col = st.columns([7, 3])
+
+    with map_col:
+
+        st.markdown("### 🗺️ Map")
+
+        st.components.v1.html(
+            f"""
+            <div style="
+                width: 100%;
+                border: 3px solid #1f6feb;
+                border-radius: 10px;
+                overflow: hidden;
+            ">
+                {st.session_state.map_html}
+            </div>
+            """,
+            height=700,
+            scrolling=True
+        )
+
+    with table_col:
+
+        st.markdown("### 📊 Routes")
+
+        st.dataframe(
+            df_table,
+            use_container_width=True,
+            hide_index=True
+        )
 
     st.download_button(
         "📤 Download Map (HTML)",
