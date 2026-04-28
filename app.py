@@ -7,6 +7,8 @@ import time
 import colorsys
 import hashlib
 
+from streamlit_folium import st_folium
+
 # -------------------------
 # PAGE CONFIG
 # -------------------------
@@ -23,10 +25,10 @@ MAPBOX_TOKEN = st.secrets["MAPBOX_TOKEN"]
 uploaded_file = st.file_uploader("Upload Excel file", type=["xlsx"])
 
 # -------------------------
-# SESSION STATE (FIXED)
+# SESSION STATE
 # -------------------------
-if "map_html" not in st.session_state:
-    st.session_state.map_html = None
+if "map" not in st.session_state:
+    st.session_state.map = None
 
 if "route_table" not in st.session_state:
     st.session_state.route_table = []
@@ -53,7 +55,6 @@ def route_colour(route_id: str):
 @st.cache_data
 def geocode(place):
     url = f"https://api.mapbox.com/geocoding/v5/mapbox.places/{place}.json"
-
     params = {
         "access_token": MAPBOX_TOKEN,
         "limit": 1,
@@ -93,7 +94,7 @@ def get_route(start_coords, end_coords):
     return None
 
 # -------------------------
-# INPUT
+# INPUTS
 # -------------------------
 if uploaded_file:
 
@@ -106,11 +107,20 @@ if uploaded_file:
     st.success(f"{len(df)} routes loaded")
 
     # -------------------------
+    # FUEL INPUT (OPTIONAL)
+    # -------------------------
+    st.subheader("⛽ Fuel Calculator (Optional)")
+    mpg = st.number_input("Vehicle MPG", min_value=0.0, value=0.0)
+    fuel_price = st.number_input("Fuel price (£/litre)", min_value=0.0, value=0.0)
+
+    use_fuel = mpg > 0 and fuel_price > 0
+
+    # -------------------------
     # GENERATE MAP
     # -------------------------
     if st.button("Generate Map"):
 
-        st.session_state.route_table = []   # 🔴 FIX: reset safely
+        st.session_state.route_table = []
 
         progress = st.progress(0)
         status = st.empty()
@@ -131,7 +141,6 @@ if uploaded_file:
             padding: 10px;
             font-size: 13px;
             border-radius: 8px;
-            box-shadow: 0px 2px 10px rgba(0,0,0,0.15);
         ">
         <b>🚛 Route Key</b><br><br>
         """
@@ -167,34 +176,42 @@ if uploaded_file:
                         tooltip=f"{start} → {end}"
                     ).add_to(m)
 
-                    # START PIN
                     folium.CircleMarker(
                         location=start_coords,
                         radius=3,
                         color=colour,
                         fill=True,
                         fill_color=colour,
-                        fill_opacity=0.9,
-                        tooltip=f"Start: {start}"
+                        fill_opacity=0.9
                     ).add_to(m)
 
-                    # END PIN
                     folium.CircleMarker(
                         location=end_coords,
                         radius=4,
                         color=colour,
                         fill=True,
                         fill_color=colour,
-                        fill_opacity=1,
-                        tooltip=f"End: {end}"
+                        fill_opacity=1
                     ).add_to(m)
 
-                    # 🔴 FIX: session state storage
+                    # -------------------------
+                    # FUEL CALCULATION
+                    # -------------------------
+                    distance_miles = route_data["distance_km"] * 0.621371
+
+                    if use_fuel:
+                        gallons_used = distance_miles / mpg
+                        litres_used = gallons_used * 4.54609
+                        fuel_cost = litres_used * fuel_price
+                    else:
+                        fuel_cost = None
+
                     st.session_state.route_table.append({
                         "From": start,
                         "To": end,
                         "Distance (km)": round(route_data["distance_km"], 1),
-                        "Drive Time (min)": round(route_data["duration_min"], 0)
+                        "Drive Time (min)": round(route_data["duration_min"], 0),
+                        "Fuel Cost (£)": round(fuel_cost, 2) if fuel_cost else "—"
                     })
 
                     legend_html += f"""
@@ -210,7 +227,7 @@ if uploaded_file:
                     </div>
                     """
 
-            time.sleep(0.03)
+            time.sleep(0.02)
 
         progress.empty()
         status.empty()
@@ -218,12 +235,12 @@ if uploaded_file:
         legend_html += "</div>"
         m.get_root().html.add_child(folium.Element(legend_html))
 
-        st.session_state.map_html = m.get_root().render()
+        st.session_state.map = m
 
 # -------------------------
-# OUTPUT (STABLE 70/30)
+# OUTPUT (70/30)
 # -------------------------
-if st.session_state.map_html:
+if st.session_state.map:
 
     df_table = pd.DataFrame(st.session_state.route_table)
 
@@ -232,37 +249,15 @@ if st.session_state.map_html:
     map_col, table_col = st.columns([7, 3])
 
     with map_col:
-
-        st.markdown("### 🗺️ Map")
-
-        st.components.v1.html(
-            f"""
-            <div style="
-                width: 100%;
-                border: 3px solid #1f6feb;
-                border-radius: 10px;
-                overflow: hidden;
-            ">
-                {st.session_state.map_html}
-            </div>
-            """,
-            height=700,
-            scrolling=True
-        )
+        st_folium(st.session_state.map, width=1200, height=700)
 
     with table_col:
-
         st.markdown("### 📊 Routes")
-
-        st.dataframe(
-            df_table,
-            use_container_width=True,
-            hide_index=True
-        )
+        st.dataframe(df_table, use_container_width=True, hide_index=True)
 
     st.download_button(
         "📤 Download Map (HTML)",
-        data=st.session_state.map_html,
+        data=st.session_state.map._repr_html_(),
         file_name="routes_map.html",
         mime="text/html"
     )
